@@ -1,0 +1,35 @@
+{
+  "name": "cursorcli2api",
+  "version": "1.0.0",
+  "description": "将 Cursor Agent CLI 反代为 OpenAI / Anthropic 兼容的 HTTP API 网关",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "cursorcli2api": "dist/cli.js"
+  },
+  "scripts": {
+    "start": "node dist/cli.js cursor-agent --host 0.0.0.0",
+    "dev": "tsx src/cli.ts",
+    "build": "tsc && cp -r src/codex_instructions dist/",
+    "typecheck": "tsc --noEmit",
+    "doctor": "tsx src/cli.ts doctor"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "commander": "^13.1.0",
+    "hono": "^4.7.0",
+    "pino": "^9.6.0",
+    "undici": "^7.3.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "keywords": ["cursor", "cli", "openai", "api", "proxy", "gateway"],
+  "license": "MIT"
+}
