@@ -315,3 +315,8 @@ cursorcli2api/
 ## License
 
 MIT
+
+
+## 致谢
+
+本项目受到 [LINUX DO](https://linux.do/) 社区的启发和支持。
