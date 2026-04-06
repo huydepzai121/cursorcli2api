@@ -57,6 +57,10 @@ export interface IterStreamJsonEventsOptions {
   timeoutMs?: number;
   /** Absolute wall-clock timeout for the entire subprocess. */
   totalTimeoutMs?: number;
+  /** Kill the subprocess after seeing a "result" event (for CLIs that don't exit on their own). */
+  killOnResult?: boolean;
+  /** Data to write to the subprocess stdin before closing it. */
+  stdinData?: string | null;
   eventCallback?: (evt: Record<string, unknown>) => void;
   stderrCallback?: (line: string) => void;
 }
@@ -73,14 +77,21 @@ export async function* iterStreamJsonEvents(
     env,
     timeoutMs = 60_000,
     totalTimeoutMs,
+    killOnResult = false,
+    stdinData = null,
     eventCallback,
     stderrCallback,
   } = opts;
 
   const proc = spawn(cmd[0], cmd.slice(1), {
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: [stdinData != null ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     env: { ...process.env, ...env },
   });
+
+  if (stdinData != null && proc.stdin) {
+    proc.stdin.write(stdinData);
+    proc.stdin.end();
+  }
 
   const stderrBuf: Buffer[] = [];
   let lastHint: string | null = null;
@@ -200,6 +211,12 @@ export async function* iterStreamJsonEvents(
 
       if (eventCallback) eventCallback(evt);
       yield evt;
+
+      if (killOnResult && evt.type === 'result') {
+        proc.kill();
+        await drainPromise;
+        return;
+      }
     }
 
     await drainPromise;

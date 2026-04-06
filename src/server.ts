@@ -6,6 +6,18 @@ import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, existsSync, statSy
 import { tmpdir } from "os";
 import { join } from "path";
 import { randomUUID } from "crypto";
+
+/**
+ * Build cursor-agent command. For long prompts (>100KB), passes prompt
+ * via stdin to avoid OS argument length limits (E2BIG).
+ */
+function buildCursorAgentCmd(baseArgs: string[], prompt: string): { cmd: string[]; stdinData: string | null } {
+  const MAX_ARG_LEN = 100 * 1024;
+  if (prompt.length < MAX_ARG_LEN) {
+    return { cmd: [...baseArgs, prompt], stdinData: null };
+  }
+  return { cmd: baseArgs, stdinData: prompt };
+}
 import pino from "pino";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -965,14 +977,16 @@ async function handleChatCompletions(
           if (settings.cursor_agent_api_key) cmd.push("--api-key", settings.cursor_agent_api_key);
           if (cursorModel) cmd.push("--model", cursorModel);
           if (settings.cursor_agent_stream_partial_output) cmd.push("--stream-partial-output");
-          cmd.push(prompt);
+          const { cmd: finalCmd, stdinData } = buildCursorAgentCmd(cmd, prompt);
 
           const assembler = new TextAssembler();
           let fallbackText: string | null = null;
           for await (const evt of iterStreamJsonEvents({
-            cmd,
+            cmd: finalCmd,
             timeoutMs: settings.timeout_seconds * 1000,
             totalTimeoutMs: settings.timeout_seconds * 1000,
+            killOnResult: true,
+            stdinData,
           })) {
             extractCursorAgentDelta(evt, assembler);
             if (evt.type === "result" && typeof evt.result === "string") fallbackText = evt.result;
@@ -1096,6 +1110,18 @@ async function handleChatCompletions(
 
     const stream = new ReadableStream({
       async start(controller) {
+        let controllerClosed = false;
+        const safeEnqueue = (data: Uint8Array) => {
+          if (!controllerClosed) {
+            try { controller.enqueue(data); } catch { controllerClosed = true; }
+          }
+        };
+        const safeClose = () => {
+          if (!controllerClosed) {
+            controllerClosed = true;
+            try { controller.close(); } catch { /* already closed */ }
+          }
+        };
         try {
           await acquireSemaphore();
           try {
@@ -1107,7 +1133,7 @@ async function handleChatCompletions(
               model: requestedModelForResponse,
               choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }],
             };
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(first)}\n\n`));
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify(first)}\n\n`));
 
             let streamUsage: Record<string, number> | null = null;
             let streamToolCalls: Record<string, unknown>[] | null = null;
@@ -1201,8 +1227,8 @@ async function handleChatCompletions(
                 if (settings.cursor_agent_api_key) cmd.push("--api-key", settings.cursor_agent_api_key);
                 if (cursorModel) cmd.push("--model", cursorModel);
                 if (settings.cursor_agent_stream_partial_output) cmd.push("--stream-partial-output");
-                cmd.push(prompt);
-                events = iterStreamJsonEvents({ cmd, timeoutMs: settings.timeout_seconds * 1000, totalTimeoutMs: settings.timeout_seconds * 1000 });
+                const { cmd: cursorFinalCmd, stdinData: cursorStdinData } = buildCursorAgentCmd(cmd, prompt);
+                events = iterStreamJsonEvents({ cmd: cursorFinalCmd, timeoutMs: settings.timeout_seconds * 1000, totalTimeoutMs: settings.timeout_seconds * 1000, killOnResult: true, stdinData: cursorStdinData });
               } else if (provider === "claude") {
                 const claudeModel = effectiveProviderModel ?? settings.claude_model ?? "sonnet";
                 if (useClaudeOauth) {
@@ -1283,7 +1309,7 @@ async function handleChatCompletions(
                     ]);
                     if (result === STREAM_END) break;
                     if (result === null && queue.length === 0) {
-                      controller.enqueue(encoder.encode(": ping\n\n"));
+                      safeEnqueue(encoder.encode(": ping\n\n"));
                       lastEventTime = Date.now();
                       continue;
                     }
@@ -1313,7 +1339,7 @@ async function handleChatCompletions(
                     const errObj = {
                       error: { message: errMsg, type: "upstream_error", code: status },
                     };
-                    controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify(errObj)}\n\n`));
+                    safeEnqueue(encoder.encode(`event: error\ndata: ${JSON.stringify(errObj)}\n\n`));
                   }
                   break;
                 }
@@ -1375,7 +1401,7 @@ async function handleChatCompletions(
                     model: requestedModelForResponse,
                     choices: [{ index: 0, delta: { content: delta }, finish_reason: null }],
                   };
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+                  safeEnqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
                 }
               }
 
@@ -1413,10 +1439,10 @@ async function handleChatCompletions(
                 model: requestedModelForResponse,
                 choices: [{ index: 0, delta: { tool_calls: streamToolCalls }, finish_reason: null }],
               };
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(toolChunk)}\n\n`));
+              safeEnqueue(encoder.encode(`data: ${JSON.stringify(toolChunk)}\n\n`));
             }
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(end)}\n\n`));
-            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify(end)}\n\n`));
+            safeEnqueue(encoder.encode("data: [DONE]\n\n"));
           } finally {
             releaseSemaphore();
           }
@@ -1435,7 +1461,7 @@ async function handleChatCompletions(
           const errObj = {
             error: { message: String(e), type: "stream_error", code: 500 },
           };
-          controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify(errObj)}\n\n`));
+          safeEnqueue(encoder.encode(`event: error\ndata: ${JSON.stringify(errObj)}\n\n`));
         } finally {
           if (imageMaterialized?.tmpdir) {
             try {
@@ -1446,7 +1472,7 @@ async function handleChatCompletions(
             }
           }
         }
-        controller.close();
+        safeClose();
       },
     });
 
