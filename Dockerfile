@@ -14,7 +14,9 @@ COPY src/ src/
 RUN npx tsc && cp -r src/codex_instructions dist/ \
     && npm prune --omit=dev
 
-ENV CODEX_PROVIDER=cursor-agent \
+ENV PATH="/root/.local/bin:$PATH" \
+    CURSOR_AGENT_BIN=agent \
+    CODEX_PROVIDER=cursor-agent \
     CODEX_PRESET=cursor-auto \
     CODEX_GATEWAY_HOST=0.0.0.0 \
     CODEX_GATEWAY_PORT=8000
