@@ -1,0 +1,17 @@
+services:
+  cursorcli2api:
+    build: .
+    ports:
+      - "${CODEX_GATEWAY_PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      - CODEX_PROVIDER=cursor-agent
+      - CODEX_PRESET=cursor-auto
+      - CODEX_GATEWAY_HOST=0.0.0.0
+    volumes:
+      - cursor-data:/root/.cursor-agent
+    restart: unless-stopped
+
+volumes:
+  cursor-data:
