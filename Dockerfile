@@ -7,11 +7,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci
 
 COPY tsconfig.json ./
 COPY src/ src/
-RUN npx tsc && cp -r src/codex_instructions dist/
+RUN npx tsc && cp -r src/codex_instructions dist/ \
+    && npm prune --omit=dev
 
 ENV CODEX_PROVIDER=cursor-agent \
     CODEX_PRESET=cursor-auto \
