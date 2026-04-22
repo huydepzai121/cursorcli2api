@@ -2,7 +2,7 @@ services:
   cursorcli2api:
     build: .
     ports:
-      - "${CODEX_GATEWAY_PORT:-8000}:8000"
+      - "${CODEX_GATEWAY_PORT:-8001}:8001"
     env_file:
       - .env
     environment:
